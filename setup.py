@@ -17,7 +17,9 @@ setuptools.setup(
     download_url="https://github.com/MaxxRK/firstrade-api/archive/refs/tags/0039.tar.gz",
     keywords=["FIRSTRADE", "API"],
     install_requires=["requests", "pyotp"],
-    packages=["firstrade"],
+    extras_require={"mcp": ["mcp[cli]>=1.2"]},
+    entry_points={"console_scripts": ["firstrade-mcp = firstrade.mcp:main"]},
+    packages=["firstrade", "firstrade.mcp"],
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
