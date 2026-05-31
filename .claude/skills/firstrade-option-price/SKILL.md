@@ -13,7 +13,7 @@ description: >-
 # Firstrade option price
 
 Fetch the option chain (pricing) for a ticker at a target number of days to
-expiration, using the `firstrade` MCP server.
+expiration, using the `firstrade.mcp` MCP server.
 
 ## Defaults
 

@@ -322,7 +322,9 @@ class FTSession:
             raise LoginResponseError(error_msg)
 
         for item in self.otp_options:
-            if (item["channel"] == "sms" and self.phone and self.phone in item["recipientMask"]) or (item["channel"] == "email" and self.email and self.email == item["recipientMask"]):
+            phone_match = item["channel"] == "sms" and self.phone and self.phone[-4:] in item["recipientMask"]
+            email_match = item["channel"] == "email" and self.email and self.email == item["recipientMask"]
+            if phone_match or email_match:
                 data.update({
                     "recipientId": item["recipientId"],
                     "t_token": self.t_token,

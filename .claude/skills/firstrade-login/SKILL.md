@@ -1,7 +1,7 @@
 ---
 name: firstrade-login
 description: >-
-  Authenticate to Firstrade through the firstrade MCP server before any
+  Authenticate to Firstrade through the firstrade.mcp MCP server before any
   account or market-data action. Use when the user asks to "log in to
   Firstrade", when a Firstrade tool reports it is not authenticated, or as a
   prerequisite for other Firstrade skills (e.g. fetching option prices).
@@ -12,7 +12,7 @@ description: >-
 
 # Firstrade login
 
-Establish an authenticated Firstrade session via the `firstrade` MCP server.
+Establish an authenticated Firstrade session via the `firstrade.mcp` MCP server.
 Other Firstrade skills depend on this one.
 
 ## Prerequisites
@@ -21,7 +21,7 @@ The `firstrade` MCP server must be attached to the agent and its credentials
 configured via environment variables (at minimum `FIRSTRADE_USERNAME` and
 `FIRSTRADE_PASSWORD`). See `firstrade/mcp/README.md` in this repo for setup.
 
-If the MCP tools below are not available, tell the user the `firstrade` MCP
+If the MCP tools below are not available, tell the user the `firstrade.mcp` MCP
 server is not connected and point them at `firstrade/mcp/README.md` — do not
 attempt to log in by any other means.
 

@@ -29,14 +29,14 @@ not call the Python library directly.
 
 To enable them:
 
-1. Install the server: `pip install -e ".[mcp]"` (adds the `firstrade-mcp`
+1. Install the server: `pip install -e ".[firstrade.mcp]"` (adds the `firstrade-mcp`
    command).
 2. Configure credentials via environment variables — at minimum
    `FIRSTRADE_USERNAME` and `FIRSTRADE_PASSWORD`. Full list and the
    live-trading switch (`FIRSTRADE_ENABLE_TRADING`) are in
    `firstrade/mcp/README.md`.
 3. Attach the server to your agent, e.g. for Claude Code:
-   `claude mcp add firstrade -- firstrade-mcp`.
+   `claude mcp add firstrade.mcp -- firstrade-mcp`.
 
 If the MCP tools are unavailable, the skills should report that the `firstrade`
 MCP server is not connected and point to `firstrade/mcp/README.md` rather than

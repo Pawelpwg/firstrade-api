@@ -2,6 +2,7 @@
 *_*.py
 *cookies*.json
 *.lock
+.mcp.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
