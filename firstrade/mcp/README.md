@@ -25,13 +25,36 @@ This adds the `firstrade-mcp` console command.
 | `FIRSTRADE_SAVE_SESSION` | no | `true` to persist the session token |
 | `FIRSTRADE_ENABLE_TRADING` | no | `true` to permit live orders/cancels (default `false`) |
 
-## Authentication flow (two-step)
+## Authentication flow
 
-1. Call the **`login`** tool. It uses the env credentials.
-2. If it returns `mfa_required: true`, call **`submit_mfa_code`** with the code
-   sent to your email/phone. (With `FIRSTRADE_PIN` or `FIRSTRADE_MFA_SECRET`,
-   login usually completes in one step.)
-3. **`auth_status`** reports session/trading state.
+Call **`login`** first; the returned `status` tells you what to do next:
+
+- **`authenticated`** — done. Happens with `FIRSTRADE_PIN`,
+  `FIRSTRADE_MFA_SECRET`, or a valid saved session token.
+- **`mfa_authenticator`** — you use an authenticator app. Call
+  **`submit_mfa_code`** with the current TOTP code.
+- **`mfa_otp`** — a code must be sent to you by SMS/email. The response
+  includes `options` (a list of masked recipients). Then:
+  1. Call **`request_otp`** with the chosen `index` (default `0`) — this sends
+     the SMS/email.
+  2. Call **`submit_mfa_code`** with the code you receive.
+
+Nothing about the code needs to be known in advance — it is generated and sent
+on the fly, and you enter it through `submit_mfa_code`. This is the right flow
+when you do **not** have a TOTP secret up front.
+
+**`auth_status`** reports session/MFA/trading state at any point.
+
+### Example (SMS)
+
+```text
+login()
+  -> { "status": "mfa_otp",
+       "options": [ { "index": 0, "channel": "sms",   "recipient": "***-***-1234" },
+                    { "index": 1, "channel": "email", "recipient": "j****@e****.com" } ] }
+request_otp(0)          -> { "code_sent": true, "channel": "sms", "recipient": "***-***-1234" }
+submit_mfa_code("123456") -> { "authenticated": true, "accounts": ["12345678"] }
+```
 
 ## Trading safety (double gate)
 
@@ -46,7 +69,7 @@ response explains why via its `note` field.
 
 ## Tools
 
-- **Auth:** `login`, `submit_mfa_code`, `auth_status`
+- **Auth:** `login`, `request_otp`, `submit_mfa_code`, `auth_status`
 - **Account:** `list_accounts`, `get_balances`, `get_balance_overview`,
   `get_positions`, `get_account_history`, `get_orders`
 - **Market data:** `get_quote`, `get_ohlc`

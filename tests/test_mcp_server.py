@@ -151,13 +151,57 @@ def test_quote_to_dict_drops_session():
 # State machine (mocked FTSession / FTAccountData)
 # ---------------------------------------------------------------------------
 
-class _FakeSession:
-    def __init__(self, need_code):
-        self._need_code = need_code
-        self.login_two_called_with = None
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
 
+    def json(self):
+        return self._payload
+
+
+class _InnerSession:
+    """Stand-in for requests.Session (headers + cookies only)."""
+
+    def __init__(self):
+        self.headers = {}
+
+
+class _FakeSession:
+    """Fake FTSession that scripts the login HTTP sequence.
+
+    ``responses`` maps URL substrings to payload dicts returned by
+    ``_request``; the credential POST drives which MFA branch is taken.
+    """
+
+    def __init__(self, login_payload, *, pin="", mfa_secret=""):
+        self._login_payload = login_payload
+        self.pin = pin
+        self.mfa_secret = mfa_secret
+        self.session = _InnerSession()
+        self.login_json = {}
+        self.t_token = None
+        self.login_two_called_with = None
+        self.requests = []
+        self.loaded_cookie = ""
+
+    # Library-style helpers used by SessionState._manual_login.
+    def _load_cookies(self):
+        return self.loaded_cookie
+
+    def _request(self, method, url, **kwargs):
+        self.requests.append((method, url))
+        if url.endswith("/login"):
+            return _FakeResponse(self._login_payload)
+        if "request_code" in url:
+            return _FakeResponse(
+                {"error": "", "verificationSid": "VSID", "t_token": "tok"},
+            )
+        return _FakeResponse({"error": ""})
+
+    # Used only on the pin/secret fast path.
     def login(self):
-        return self._need_code
+        self.login_json = {"sid": "S", "ftat": "F", "error": ""}
+        return False
 
     def login_two(self, code):
         self.login_two_called_with = code
@@ -167,6 +211,19 @@ class _FakeAccountData:
     def __init__(self, session):
         self.account_numbers = ["12345678"]
         self.account_balances = {"12345678": "1000.00"}
+
+
+# Login server payloads for each MFA branch.
+_OTP_PAYLOAD = {
+    "error": "",
+    "t_token": "tok",
+    "otp": [
+        {"channel": "sms", "recipientMask": "***-***-1234", "recipientId": "r1"},
+        {"channel": "email", "recipientMask": "j****@e****.com", "recipientId": "r2"},
+    ],
+}
+_AUTHENTICATOR_PAYLOAD = {"error": "", "mfa": True, "t_token": "tok"}
+_SAVED_SESSION_PAYLOAD = {"error": "", "ftat": "F", "sid": "S"}
 
 
 @pytest.fixture
@@ -183,31 +240,81 @@ def patched_state(monkeypatch):
     return st
 
 
-def test_login_completes_without_mfa(monkeypatch, patched_state):
+def _use_session(monkeypatch, session):
     monkeypatch.setattr(
-        "firstrade.mcp.state.FTSession",
-        lambda **kw: _FakeSession(need_code=False),
+        "firstrade.mcp.state.FTSession", lambda **kw: session,
     )
+    return session
+
+
+def test_login_saved_session_authenticates(monkeypatch, patched_state):
+    _use_session(monkeypatch, _FakeSession(_SAVED_SESSION_PAYLOAD))
     res = call(server.login)
-    assert res["authenticated"] is True
+    assert res["status"] == "authenticated"
     assert res["accounts"] == ["12345678"]
     assert patched_state.is_authenticated is True
 
 
-def test_login_then_mfa(monkeypatch, patched_state):
-    monkeypatch.setattr(
-        "firstrade.mcp.state.FTSession",
-        lambda **kw: _FakeSession(need_code=True),
-    )
+def test_login_pin_fast_path(monkeypatch, patched_state):
+    server.config.pin = "1234"
+    _use_session(monkeypatch, _FakeSession({}, pin="1234"))
     res = call(server.login)
-    assert res["mfa_required"] is True
+    assert res["status"] == "authenticated"
+    assert patched_state.is_authenticated is True
+
+
+def test_login_authenticator_then_code(monkeypatch, patched_state):
+    sess = _use_session(monkeypatch, _FakeSession(_AUTHENTICATOR_PAYLOAD))
+    res = call(server.login)
+    assert res["status"] == "mfa_authenticator"
     assert patched_state.awaiting_mfa is True
     assert patched_state.is_authenticated is False
 
     res2 = call(server.submit_mfa_code, "999999")
     assert res2["authenticated"] is True
-    assert patched_state.session.login_two_called_with == "999999"
+    assert sess.login_two_called_with == "999999"
+
+
+def test_login_otp_sms_flow(monkeypatch, patched_state):
+    """The core requested flow: login -> request SMS -> submit code."""
+    sess = _use_session(monkeypatch, _FakeSession(_OTP_PAYLOAD))
+    res = call(server.login)
+    assert res["status"] == "mfa_otp"
+    # Masked recipients surfaced for the caller to choose.
+    assert res["options"][0]["channel"] == "sms"
+    assert res["options"][0]["recipient"] == "***-***-1234"
+    assert patched_state.awaiting_mfa is False  # not until code requested
+
+    sent = call(server.request_otp, 0)
+    assert sent["code_sent"] is True
+    assert sent["channel"] == "sms"
+    assert patched_state.awaiting_mfa is True
+    assert ("post", server.symbols.urls.request_code()) in sess.requests
+
+    res2 = call(server.submit_mfa_code, "123456")
+    assert res2["authenticated"] is True
+    assert sess.login_two_called_with == "123456"
     assert patched_state.is_authenticated is True
+
+
+def test_otp_submit_before_request_is_rejected(monkeypatch, patched_state):
+    _use_session(monkeypatch, _FakeSession(_OTP_PAYLOAD))
+    call(server.login)
+    # Must request the code before submitting it.
+    with pytest.raises(RuntimeError, match="Request a code first"):
+        call(server.submit_mfa_code, "123456")
+
+
+def test_request_otp_invalid_index(monkeypatch, patched_state):
+    _use_session(monkeypatch, _FakeSession(_OTP_PAYLOAD))
+    call(server.login)
+    with pytest.raises(ValueError, match="Invalid option index"):
+        call(server.request_otp, 9)
+
+
+def test_request_otp_without_login(patched_state):
+    with pytest.raises(RuntimeError, match="No OTP login"):
+        call(server.request_otp, 0)
 
 
 def test_login_missing_credentials(patched_state):
@@ -222,10 +329,7 @@ def test_unauthenticated_account_access(patched_state):
 
 
 def test_resolve_account_defaults_and_validates(monkeypatch, patched_state):
-    monkeypatch.setattr(
-        "firstrade.mcp.state.FTSession",
-        lambda **kw: _FakeSession(need_code=False),
-    )
+    _use_session(monkeypatch, _FakeSession(_SAVED_SESSION_PAYLOAD))
     call(server.login)
     assert patched_state.resolve_account(None) == "12345678"
     with pytest.raises(ValueError, match="Unknown account"):
@@ -248,10 +352,7 @@ class _FakeOrder:
 
 
 def _login(monkeypatch):
-    monkeypatch.setattr(
-        "firstrade.mcp.state.FTSession",
-        lambda **kw: _FakeSession(need_code=False),
-    )
+    _use_session(monkeypatch, _FakeSession(_SAVED_SESSION_PAYLOAD))
     call(server.login)
 
 

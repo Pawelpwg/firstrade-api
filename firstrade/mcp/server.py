@@ -149,34 +149,70 @@ def _filter_option_chain(
 def login() -> dict[str, Any]:
     """Log in to Firstrade using credentials from the environment.
 
-    Reads FIRSTRADE_USERNAME / FIRSTRADE_PASSWORD (and optional PIN, EMAIL,
-    PHONE, MFA_SECRET). If an emailed/SMS code is required, returns
-    ``mfa_required: true`` — then call ``submit_mfa_code`` with the code.
+    Reads FIRSTRADE_USERNAME / FIRSTRADE_PASSWORD (and optional PIN,
+    MFA_SECRET). Returns a ``status`` describing the next step:
+
+    - ``authenticated``: done (PIN/TOTP-secret/saved-session login).
+    - ``mfa_authenticator``: enter your authenticator-app code via
+      ``submit_mfa_code``.
+    - ``mfa_otp``: an SMS/email code is needed. The response includes
+      ``options`` (masked recipients). Call ``request_otp`` with the chosen
+      index to send the code, then ``submit_mfa_code``.
+
+    Nothing about the code needs to be known in advance — the code is sent on
+    the fly and entered through ``submit_mfa_code``.
     """
     if not config.has_credentials:
         return {
             "error": "Missing credentials. Set FIRSTRADE_USERNAME and "
             "FIRSTRADE_PASSWORD in the server environment.",
         }
-    need_code = state.start_login()
-    if need_code:
+    result = state.start_login()
+    status = result["status"]
+    if status == "authenticated":
         return {
-            "mfa_required": True,
-            "message": "A verification code was sent. Call submit_mfa_code "
-            "with the code from your email/phone.",
+            "status": status,
+            "authenticated": True,
+            "accounts": state.account_data.account_numbers,
         }
+    if status == "mfa_authenticator":
+        return {
+            "status": status,
+            "authenticated": False,
+            "message": "Enter your authenticator-app code via submit_mfa_code.",
+        }
+    # mfa_otp
     return {
-        "mfa_required": False,
-        "authenticated": True,
-        "accounts": state.account_data.account_numbers,
+        "status": status,
+        "authenticated": False,
+        "options": result["options"],
+        "message": "Call request_otp with the chosen option index to send the "
+        "SMS/email code, then submit_mfa_code with the code you receive.",
+    }
+
+
+@mcp.tool()
+def request_otp(index: int = 0) -> dict[str, Any]:
+    """Send an SMS/email MFA code to a recipient offered by ``login``.
+
+    ``index`` selects from the ``options`` list returned by ``login`` (default
+    0). After the code arrives, pass it to ``submit_mfa_code``.
+    """
+    sent = state.request_otp(index)
+    return {
+        "code_sent": True,
+        "channel": sent["channel"],
+        "recipient": sent["recipient"],
+        "message": "Code sent. Call submit_mfa_code with the code you receive.",
     }
 
 
 @mcp.tool()
 def submit_mfa_code(code: str) -> dict[str, Any]:
-    """Finish a two-step login by submitting the MFA verification code."""
+    """Finish login by submitting the MFA code (authenticator or SMS/email)."""
     state.finish_mfa(code)
     return {
+        "status": "authenticated",
         "authenticated": True,
         "accounts": state.account_data.account_numbers,
     }
@@ -188,6 +224,7 @@ def auth_status() -> dict[str, Any]:
     return {
         "authenticated": state.is_authenticated,
         "awaiting_mfa": state.awaiting_mfa,
+        "mfa_mode": state.mfa_mode,
         "trading_enabled": config.enable_trading,
         "accounts": state.account_data.account_numbers
         if state.is_authenticated
