@@ -144,6 +144,9 @@ class SessionState:
         ):
             s.session.headers["sid"] = login_json["sid"]
             s.session.headers["ftat"] = login_json["ftat"]
+            # Firstrade rotates the ftat on every login; persist the fresh one
+            # so the 30-day remember-me window keeps rolling.
+            s._save_cookies()
             self._load_account_data()
             return {"status": "authenticated"}
 

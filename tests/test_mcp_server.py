@@ -183,10 +183,14 @@ class _FakeSession:
         self.login_two_called_with = None
         self.requests = []
         self.loaded_cookie = ""
+        self.saved_cookies = False
 
     # Library-style helpers used by SessionState._manual_login.
     def _load_cookies(self):
         return self.loaded_cookie
+
+    def _save_cookies(self):
+        self.saved_cookies = True
 
     def _request(self, method, url, **kwargs):
         self.requests.append((method, url))
@@ -248,11 +252,13 @@ def _use_session(monkeypatch, session):
 
 
 def test_login_saved_session_authenticates(monkeypatch, patched_state):
-    _use_session(monkeypatch, _FakeSession(_SAVED_SESSION_PAYLOAD))
+    sess = _use_session(monkeypatch, _FakeSession(_SAVED_SESSION_PAYLOAD))
     res = call(server.login)
     assert res["status"] == "authenticated"
     assert res["accounts"] == ["12345678"]
     assert patched_state.is_authenticated is True
+    # The rotated ftat from the login response must be re-persisted.
+    assert sess.saved_cookies is True
 
 
 def test_login_pin_fast_path(monkeypatch, patched_state):
